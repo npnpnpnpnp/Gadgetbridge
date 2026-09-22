@@ -7,8 +7,18 @@ import re
 import zipfile
 
 MAX_SIZE = 7 * 1024 * 1024
-FIELDS = ("width", "height", "mainModel", "matchModel", "algorithm", "config",
-          "screenType", "grade", "customer", "version")
+FIELDS = (
+    "width",
+    "height",
+    "mainModel",
+    "matchModel",
+    "algorithm",
+    "config",
+    "screenType",
+    "grade",
+    "customer",
+    "version",
+)
 
 
 def read_properties(path):
@@ -24,15 +34,27 @@ def read_properties(path):
 
         def unescape(value):
             value = re.sub(r"\\u([0-9a-fA-F]{4})", lambda m: chr(int(m[1], 16)), value)
-            return re.sub(r"\\(.)", lambda m: {"n": "\n", "r": "\r", "t": "\t", "f": "\f"}.get(m[1], m[1]), value)
+            return re.sub(
+                r"\\(.)",
+                lambda m: {"n": "\n", "r": "\r", "t": "\t", "f": "\f"}.get(m[1], m[1]),
+                value,
+            )
 
         result[unescape(parts[0].rstrip())] = unescape(parts[1].lstrip())
     return result
 
 
 def escape(value):
-    return (str(value).replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r")
-            .replace("\t", "\\t").replace("=", "\\=").replace(":", "\\:").replace(" ", "\\ "))
+    return (
+        str(value)
+        .replace("\\", "\\\\")
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+        .replace("=", "\\=")
+        .replace(":", "\\:")
+        .replace(" ", "\\ ")
+    )
 
 
 def pack(args):
@@ -54,26 +76,60 @@ def pack(args):
     if not data:
         raise ValueError("Empty binary")
     metadata = {key: display[key] for key in FIELDS}
-    metadata.update(format="fitpro-watchface-1", name=args.name, slot=args.slot,
-                    position=args.position, custom=int(args.custom), sha256=hashlib.sha256(data).hexdigest())
+    metadata.update(
+        format="fitpro-watchface-1",
+        name=args.name,
+        slot=args.slot,
+        position=args.position,
+        custom=int(args.custom),
+        sha256=hashlib.sha256(data).hexdigest(),
+    )
     manifest = "".join(f"{key}={escape(value)}\n" for key, value in metadata.items())
     # Never overwrite an existing package accidentally.
     with zipfile.ZipFile(args.output, "x", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("watchface.properties", manifest.encode("utf-8"))
         archive.writestr("watchface.bin", data)
     print(f"Created {args.output} ({len(data)} payload bytes)")
-    print("The package is labelled for this display; the binary itself must already be compatible.")
+    print(
+        "The package is labelled for this display; the binary itself must already be compatible."
+    )
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--display", required=True, type=Path, help="Display details exported by Gadgetbridge")
-    parser.add_argument("--binary", required=True, type=Path, help="Final prepared watch-face payload, including any required thumbnail/font")
-    parser.add_argument("--output", required=True, type=Path, help="New .fitpro.zip package")
+    parser.add_argument(
+        "--display",
+        required=True,
+        type=Path,
+        help="Display details exported by Gadgetbridge",
+    )
+    parser.add_argument(
+        "--binary",
+        required=True,
+        type=Path,
+        help="Final prepared watch-face payload, including any required thumbnail/font",
+    )
+    parser.add_argument(
+        "--output", required=True, type=Path, help="New .fitpro.zip package"
+    )
     parser.add_argument("--name", required=True)
-    parser.add_argument("--slot", type=int, default=1, help="One-based slot; use 1 for watches with slots=0")
-    parser.add_argument("--position", type=int, default=0, help="Layout position from the source face metadata")
-    parser.add_argument("--custom", action="store_true", help="Set only for a prepared custom-photo face")
+    parser.add_argument(
+        "--slot",
+        type=int,
+        default=1,
+        help="One-based slot; use 1 for watches with slots=0",
+    )
+    parser.add_argument(
+        "--position",
+        type=int,
+        default=0,
+        help="Layout position from the source face metadata",
+    )
+    parser.add_argument(
+        "--custom",
+        action="store_true",
+        help="Set only for a prepared custom-photo face",
+    )
     args = parser.parse_args()
     try:
         pack(args)
