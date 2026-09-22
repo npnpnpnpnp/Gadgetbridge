@@ -90,6 +90,15 @@ import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCharacteristic;
 import android.content.Intent;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.net.Uri;
+import android.util.Base64;
+import androidx.annotation.NonNull;
+import java.io.InputStream;
+import nodomain.freeyourgadget.gadgetbridge.devices.fitpro.FitProWatchfaceInfo;
+import nodomain.freeyourgadget.gadgetbridge.devices.fitpro.FitProWatchfaceFile;
+import nodomain.freeyourgadget.gadgetbridge.devices.fitpro.FitProWatchfaceInstallHandler;
 import android.widget.Toast;
 
 import androidx.annotation.Nullable;
@@ -118,6 +127,7 @@ import java.util.UUID;
 import lineageos.weather.util.TemperatureUtils;
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.R;
+import nodomain.freeyourgadget.gadgetbridge.devices.fitpro.FitProWatchfaceNotification;
 import nodomain.freeyourgadget.gadgetbridge.activities.SettingsActivity;
 import nodomain.freeyourgadget.gadgetbridge.activities.devicesettings.DeviceSettingsPreferenceConst;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHandler;
@@ -167,6 +177,16 @@ public class FitProDeviceSupport extends AbstractBTLESingleDeviceSupport {
     public BluetoothGattCharacteristic writeCharacteristic;
     private static final boolean debugEnabled = false;
     private int mtuSize=20;
+    private final FitProPacketAssembler packetAssembler = new FitProPacketAssembler();
+    private final Handler fitProHandler = new Handler(Looper.getMainLooper());
+    private volatile FitProWatchfaceInfo watchfaceInfo;
+    private volatile FitProWatchfaceTransfer watchfaceTransfer;
+    private volatile Uri watchfaceUri;
+    private long lastWatchfaceProgress;
+    private boolean hiWatch;
+    private long lastFragmentTime;
+    private final Runnable watchfaceTimeout = this::pollWatchfaceStatus;
+    private final Runnable fetchTimeout = this::indicateFinishedFetchingOperation;
 
     public FitProDeviceSupport() {
         super(LOG);
@@ -192,18 +212,25 @@ public class FitProDeviceSupport extends AbstractBTLESingleDeviceSupport {
         batteryInfoProfile = new BatteryInfoProfile<>(this);
         batteryInfoProfile.addListener(mListener);
         addSupportedProfile(batteryInfoProfile);
-        addSupportedService(FitProConstants.UUID_CHARACTERISTIC_RX);
+        addSupportedService(FitProConstants.UUID_SERVICE_HIWATCH);
         addSupportedService(FitProConstants.UUID_CHARACTERISTIC_UART);
     }
 
     @Override
     public TransactionBuilder initializeDevice(TransactionBuilder builder) {
+        packetAssembler.reset();
+        watchfaceInfo = null;
         builder.setDeviceState(GBDevice.State.INITIALIZING);
         readCharacteristic = getCharacteristic(UUID_CHARACTERISTIC_RX);
         writeCharacteristic = getCharacteristic(UUID_CHARACTERISTIC_TX);
+        if (readCharacteristic == null || writeCharacteristic == null) {
+            LOG.error("FitPro command service is missing; refusing false initialization");
+            builder.setDeviceState(GBDevice.State.CONNECTED);
+            return builder;
+        }
+        hiWatch = writeCharacteristic.getService().getUuid().equals(FitProConstants.UUID_SERVICE_HIWATCH);
 
         builder.notify(UUID_CHARACTERISTIC_RX, true);
-        builder.notify(GattService.UUID_SERVICE_BATTERY_SERVICE, true);
         builder.setCallback(this);
 
         deviceInfoProfile.requestDeviceInfo(builder);
@@ -276,27 +303,36 @@ public class FitProDeviceSupport extends AbstractBTLESingleDeviceSupport {
     public boolean onCharacteristicChanged(BluetoothGatt gatt,
                                            BluetoothGattCharacteristic characteristic,
                                            byte[] data) {
-        super.onCharacteristicChanged(gatt, characteristic, data);
-        UUID characteristicUUID = characteristic.getUuid();
-        debugPrintArray(data, "FitPro received value");
-        if (data[0] != FitProConstants.DATA_HEADER) {
-            if (debugEnabled) {
-                LOG.info("FitPro, packet not starting with 0xcd: " + data[0]);
-                debugPrintArray(new byte[]{data[0]}, "first byte");
-                LOG.info("Characteristic changed UUID: " + characteristicUUID);
-                LOG.info("Characteristic changed service: " + characteristic.getService().getCharacteristics());
-                debugPrintArray(data, "value bytes");
-            }
-            indicateFinishedFetchingOperation();
-            return false;
+        if (!UUID_CHARACTERISTIC_RX.equals(characteristic.getUuid())) {
+            return super.onCharacteristicChanged(gatt, characteristic, data);
         }
+        long now = android.os.SystemClock.elapsedRealtime();
+        if (now - lastFragmentTime > 5000) packetAssembler.reset();
+        lastFragmentTime = now;
+        for (byte[] packet : packetAssembler.accept(data)) {
+            if (packet[0] != FitProConstants.DATA_HEADER || packet.length < 8) continue;
+            int payloadLength = ((packet[6] & 255) << 8) | (packet[7] & 255);
+            if (payloadLength != packet.length - 8) {
+                LOG.warn("Ignoring malformed FitPro payload length");
+                continue;
+            }
+            try {
+                handleFitProPacket(packet);
+            } catch (RuntimeException e) {
+                LOG.warn("Unable to parse FitPro packet {}", GB.hexdump(packet), e);
+            }
+        }
+        return true;
+    }
 
+    private void handleFitProPacket(byte[] data) {
         if (data != null && data.length > 5) {
             byte command = data[3];
             byte param = data[5];
 
             switch (command) {
                 case CMD_GROUP_RECEIVE_BUTTON_DATA:
+                    sendAck(data[3], data[1], data[2], data[5]);
                     switch (param) {
                         case RX_FIND_PHONE:
                             handleFindPhone();
@@ -343,9 +379,28 @@ public class FitProDeviceSupport extends AbstractBTLESingleDeviceSupport {
                     }
                     break;
                 case CMD_GROUP_BAND_INFO:
+                    if (param == 1) {
+                        sendAck(data[3], data[1], data[2], data[5]);
+                        if (data.length == 12) {
+                            int status = ByteBuffer.wrap(data, 8, 4).getInt();
+                            final int uploadStatus = status;
+                            fitProHandler.post(() -> onWatchfaceStatus(uploadStatus));
+                        }
+                        break;
+                    }
                     switch (param) {
                         case CMD_RX_BAND_INFO:
-                            handleDeviceInfo(data);
+                            byte[] payload = Arrays.copyOfRange(data, 8, data.length);
+                            try {
+                                watchfaceInfo = new FitProWatchfaceInfo(payload);
+                                GBApplication.getDeviceSpecificSharedPrefs(gbDevice.getAddress()).edit()
+                                        .putString(FitProWatchfaceInstallHandler.PREF_CAPABILITIES,
+                                                Base64.encodeToString(payload, Base64.NO_WRAP)).apply();
+                                LOG.info("FitPro watch-face details: {}", watchfaceInfo);
+                                gbDevice.sendDeviceUpdateIntent(getContext());
+                            } catch (RuntimeException e) {
+                                LOG.warn("Invalid watch-face capability response", e);
+                            }
                             break;
                     }
                     sendAck(data[3], data[1], data[2], data[5]);
@@ -360,18 +415,16 @@ public class FitProDeviceSupport extends AbstractBTLESingleDeviceSupport {
                     break;
             }
 
-            LOG.info("Characteristic changed UUID: " + characteristicUUID);
-            LOG.info("Characteristic changed service: " + characteristic.getService().getCharacteristics());
             debugPrintArray(data, "value bytes");
         }
-        return false;
     }
 
     public void indicateFinishedFetchingOperation() {
         //LOG.debug("download finish announced");
+        fitProHandler.removeCallbacks(fetchTimeout);
         GB.updateTransferNotification(null, "", false, 100, getContext());
         GB.signalActivityDataFinish(getDevice());
-        unsetBusy();
+        if (watchfaceTransfer == null) unsetBusy();
     }
 
     public void indicateStartingFetchingOperation() {
@@ -416,24 +469,28 @@ public class FitProDeviceSupport extends AbstractBTLESingleDeviceSupport {
     }
 
     public void handleHR(byte[] value) {
-        LOG.debug("FitPro handle heart rate measurement");
-        debugPrintArray(value, "value");
-        if (value.length < 17) {
-            LOG.debug("FitPro heartrate measurement payload too short");
-            return;
+        if (value.length < 12 || (value.length - 12) % 8 != 0) return;
+        Calendar date = decodeDateTime(Arrays.copyOfRange(value, 8, 10));
+        List<FitProActivitySample> samples = new ArrayList<>();
+        for (int offset = 12; offset + 8 <= value.length; offset += 8) {
+            int seconds = ByteBuffer.wrap(value, offset, 4).getInt();
+            if (seconds < 0 || seconds >= 86400) return;
+            Calendar timestamp = (Calendar) date.clone();
+            timestamp.add(Calendar.SECOND, seconds);
+            FitProActivitySample sample = new FitProActivitySample();
+            sample.setTimestamp((int) (timestamp.getTimeInMillis() / 1000));
+            sample.setSpo2Percent(value[offset + 4] & 255);
+            sample.setPressureLowMmHg(value[offset + 5] & 255);
+            sample.setPressureHighMmHg(value[offset + 6] & 255);
+            sample.setHeartRate(value[offset + 7] & 255);
+            sample.setRawKind(1);
+            samples.add(sample);
         }
-
-        int heartRate = (int) value[19];
-        int pressureLow = (int) value[18];
-        int pressureHigh = (int) value[17];
-        int spo2 = (int) value[13];
-        int seconds = ByteBuffer.wrap(value, 12, 4).getInt();
-        sendAck(value[3], value[1], value[2], value[5]);
-
-        if (!(heartRate > 0)) {
-            return;
+        if (addGBActivitySamples(samples)) {
+            sendAck(value[3], value[1], value[2], value[5]);
+            for (FitProActivitySample sample : samples) broadcastSample(sample);
+            GB.signalActivityDataFinish(getDevice());
         }
-        handleHR(seconds, heartRate, pressureLow, pressureHigh, spo2);
     }
 
     @Override
@@ -546,7 +603,121 @@ public class FitProDeviceSupport extends AbstractBTLESingleDeviceSupport {
 
     @Override
     public void onTestNewFunction(@Nullable Bundle options) {
-        LOG.debug("Hello FitPro Test function");
+        if (watchfaceTransfer != null || writeCharacteristic == null || !gbDevice.isInitialized()) return;
+        sendWatchfacePacket(craftData((byte) 0x20, (byte) 2));
+    }
+
+    @Override
+    public void onCameraStatusChange(GBDeviceEventCameraRemote.Event event, String filename) {
+        if (writeCharacteristic == null || watchfaceTransfer != null) return;
+        if (event == GBDeviceEventCameraRemote.Event.OPEN_CAMERA || event == GBDeviceEventCameraRemote.Event.CLOSE_CAMERA) {
+            TransactionBuilder builder = createTransactionBuilder("FitPro camera mode");
+            builder.write(writeCharacteristic, craftData((byte) 0x12, (byte) 0x0c,
+                    event == GBDeviceEventCameraRemote.Event.OPEN_CAMERA ? VALUE_ON : VALUE_OFF));
+            builder.queue();
+        }
+    }
+
+    @Override
+    public void onEnableRealtimeSteps(boolean enable) {
+        if (writeCharacteristic == null || watchfaceTransfer != null) return;
+        TransactionBuilder builder = createTransactionBuilder("FitPro live steps");
+        builder.write(writeCharacteristic, craftData((byte) 0x15, (byte) 6, enable ? VALUE_ON : VALUE_OFF));
+        builder.queue();
+    }
+
+    @Override
+    public void onInstallApp(Uri uri, @NonNull Bundle options) {
+        fitProHandler.post(() -> {
+            if (watchfaceTransfer != null || gbDevice.isBusy()) {
+                GB.toast(getContext(), "Wait for the current transfer to finish", Toast.LENGTH_LONG, GB.WARN);
+                return;
+            }
+            try (InputStream input = getContext().getContentResolver().openInputStream(uri)) {
+                if (!gbDevice.isInitialized() || writeCharacteristic == null || readCharacteristic == null || input == null) {
+                    throw new IllegalArgumentException("Watch is not ready for upload");
+                }
+                FitProWatchfaceFile file = new FitProWatchfaceFile(input);
+                // Use capabilities read during this connection, never an old cached device description.
+                file.checkCompatible(watchfaceInfo);
+                watchfaceUri = uri;
+                watchfaceTransfer = new FitProWatchfaceTransfer(file.data, watchfaceInfo.blockSize());
+                gbDevice.setBusyTask(R.string.fitpro_uploading_watchface, getContext());
+                gbDevice.sendDeviceUpdateIntent(getContext());
+                lastWatchfaceProgress = android.os.SystemClock.elapsedRealtime();
+                sendWatchfacePacket(FitProWatchfaceTransfer.packet(0x1f, 2, file.startPayload(watchfaceInfo)));
+                updateWatchfaceProgress(0);
+                fitProHandler.postDelayed(watchfaceTimeout, 2000);
+            } catch (Exception e) {
+                finishWatchfaceUpload(false, e.getMessage());
+            }
+        });
+    }
+
+    private void sendWatchfacePacket(byte[] packet) {
+        if (writeCharacteristic == null || !gbDevice.isConnected()) {
+            throw new IllegalStateException("Watch disconnected");
+        }
+        TransactionBuilder builder = createTransactionBuilder("FitPro watch face");
+        // The application blocks are 120/200 bytes; their framed packets are fragmented for ATT.
+        writeChunkedData(builder, packet);
+        builder.queue();
+    }
+
+    private void onWatchfaceStatus(int status) {
+        if (watchfaceTransfer == null) return;
+        try {
+            byte[] next = watchfaceTransfer.onStatus(status);
+            if (watchfaceTransfer.isComplete()) {
+                finishWatchfaceUpload(true, getContext().getString(R.string.fitpro_watchface_complete));
+            } else if (next != null) {
+                lastWatchfaceProgress = android.os.SystemClock.elapsedRealtime();
+                sendWatchfacePacket(next);
+                updateWatchfaceProgress(watchfaceTransfer.progress());
+            }
+        } catch (RuntimeException e) {
+            finishWatchfaceUpload(false, e.getMessage());
+        }
+    }
+
+    private void pollWatchfaceStatus() {
+        if (watchfaceTransfer == null) return;
+        try {
+            if (android.os.SystemClock.elapsedRealtime() - lastWatchfaceProgress >= 10000) {
+                throw new IllegalStateException("Watch-face upload timed out. Reconnect before retrying.");
+            }
+            sendWatchfacePacket(craftData((byte) 0x20, (byte) 1));
+            fitProHandler.postDelayed(watchfaceTimeout, 2000);
+        } catch (RuntimeException e) { finishWatchfaceUpload(false, e.getMessage()); }
+    }
+
+    private void updateWatchfaceProgress(int progress) {
+        FitProWatchfaceNotification.update(getContext(), gbDevice, watchfaceUri, getContext().getString(R.string.fitpro_uploading_watchface), progress, true);
+        Intent intent = new Intent(GB.ACTION_SET_PROGRESS_BAR);
+        intent.putExtra(GB.PROGRESS_BAR_PROGRESS, progress);
+        LocalBroadcastManager.getInstance(getContext()).sendBroadcast(intent);
+    }
+
+    private void finishWatchfaceUpload(boolean success, String message) {
+        fitProHandler.removeCallbacks(watchfaceTimeout);
+        boolean wasUploading = watchfaceTransfer != null;
+        watchfaceTransfer = null;
+        if (wasUploading) unsetBusy();
+        String text = message != null ? message : "Watch-face upload failed";
+        if (success) GB.removeNotification(GB.NOTIFICATION_ID_INSTALL, getContext());
+        else FitProWatchfaceNotification.update(getContext(), gbDevice, watchfaceUri, text, 0, false);
+        Intent info = new Intent(GB.ACTION_SET_INFO_TEXT).putExtra(GB.DISPLAY_MESSAGE_MESSAGE, text);
+        LocalBroadcastManager.getInstance(getContext()).sendBroadcast(info);
+        LocalBroadcastManager.getInstance(getContext()).sendBroadcast(new Intent(GB.ACTION_SET_FINISHED));
+        if (!success) LOG.warn("FitPro upload failed: {}", text);
+    }
+
+    @Override
+    public void dispose() {
+        fitProHandler.removeCallbacksAndMessages(null);
+        if (watchfaceTransfer != null) finishWatchfaceUpload(false, "Watch disconnected during upload");
+        packetAssembler.reset();
+        super.dispose();
     }
 
     @Override
@@ -748,18 +919,26 @@ public class FitProDeviceSupport extends AbstractBTLESingleDeviceSupport {
 
     @Override
     public void onFetchRecordedData(int dataTypes) {
+        if (writeCharacteristic == null || watchfaceTransfer != null) return;
         indicateFinishedFetchingOperation();
         TransactionBuilder builder = createTransactionBuilder("fetch data1");
         builder.setBusyTask(R.string.busy_task_fetch_activity_data);
+        if (hiWatch) {
+            builder.write(writeCharacteristic, craftData(CMD_GROUP_RECEIVE_SPORTS_DATA, (byte) 1, VALUE_ON));
+            builder.sleep(200);
+            builder.write(writeCharacteristic, craftData(CMD_GROUP_RECEIVE_SPORTS_DATA, (byte) 0x0d, VALUE_ON));
+        }
         builder.write(writeCharacteristic, craftData(CMD_GROUP_RECEIVE_SPORTS_DATA, CMD_REQUEST_STEPS_DATA1, VALUE_ON));
         builder.queue();
+        fitProHandler.removeCallbacks(fetchTimeout);
+        fitProHandler.postDelayed(fetchTimeout, 30000);
     }
 
 
     public void handleDayTotalsData(byte[] value) {
         LOG.debug("FitPro handle day data length: " + value.length);
         debugPrintArray(value, "value");
-        if (value.length < 10) {
+        if (value.length < 20) {
             LOG.debug("FitPro payload too short");
             return;
         }
@@ -767,13 +946,18 @@ public class FitProDeviceSupport extends AbstractBTLESingleDeviceSupport {
         int steps = ByteBuffer.wrap(value, 10, 4).getInt();
         int distance = ByteBuffer.wrap(value, 14, 4).getInt();
 
-        byte[] caloriesBytes = new byte[3];
-        System.arraycopy(value, 18, caloriesBytes, 0, 2);
-        int calories = ByteBuffer.wrap(caloriesBytes, 0, 3).getShort();
+        int calories = Short.toUnsignedInt(ByteBuffer.wrap(value, 18, 2).getShort());
 
         LOG.debug("processing day data summary, steps: " + steps + " distance: " + distance + " calories: " + calories);
         sendAck(value[3], value[1], value[2], value[5]);
-        //handleDayTotalsData(steps, distance, calories);
+        // Totals are broadcast live, not inserted as incremental steps (which would double count history).
+        FitProActivitySample sample = new FitProActivitySample();
+        sample.setTimestamp((int) (System.currentTimeMillis() / 1000));
+        sample.setSteps(steps);
+        sample.setDistanceMeters(distance);
+        sample.setCaloriesBurnt(calories);
+        sample.setHeartRate(ActivitySample.NOT_MEASURED);
+        broadcastSample(sample);
     }
 
     public void handleBatteryInfo(nodomain.freeyourgadget.gadgetbridge.service.btle.profiles.battery.BatteryInfo info) {
@@ -793,7 +977,8 @@ public class FitProDeviceSupport extends AbstractBTLESingleDeviceSupport {
     public void handleCamera(byte command) {
         LOG.debug("Got camera button: {}", String.format("0x%02x", command));
         final GBDeviceEventCameraRemote cameraEvent = new GBDeviceEventCameraRemote();
-        cameraEvent.event = GBDeviceEventCameraRemote.Event.TAKE_PICTURE;
+        cameraEvent.event = !hiWatch ? GBDeviceEventCameraRemote.Event.TAKE_PICTURE : command == RX_CAMERA2 ? GBDeviceEventCameraRemote.Event.OPEN_CAMERA :
+                command == RX_CAMERA3 ? GBDeviceEventCameraRemote.Event.CLOSE_CAMERA : GBDeviceEventCameraRemote.Event.TAKE_PICTURE;
         evaluateGBDeviceEvent(cameraEvent);
     }
 
@@ -991,7 +1176,7 @@ public class FitProDeviceSupport extends AbstractBTLESingleDeviceSupport {
 
     @Override
     public void onFindDevice(boolean start) {
-        getQueue().clear();
+        if (writeCharacteristic == null || watchfaceTransfer != null) return;
         LOG.debug("FitPro find device");
         TransactionBuilder builder = createTransactionBuilder("searching");
         builder.write(writeCharacteristic, craftData(CMD_GROUP_GENERAL, CMD_FIND_BAND, start ? VALUE_ON : VALUE_OFF));
@@ -1226,6 +1411,7 @@ public class FitProDeviceSupport extends AbstractBTLESingleDeviceSupport {
     }
 
     public void handleSleepData(byte[] value) {
+        if (value.length < 12 || (value.length - 12) % 4 != 0) return;
         debugPrintArray(value, "sleep data value");
         // sleep packet consists of: date + list of 4bytes of 15minutes intervals
         // these intervals contain seconds offset from the date and type of sleep
@@ -1269,6 +1455,7 @@ public class FitProDeviceSupport extends AbstractBTLESingleDeviceSupport {
     }
 
     public void handleStepData(byte[] value) {
+        if (value.length < 12 || (value.length - 12) % 8 != 0) return;
         debugPrintArray(value, "step data value");
         // step packet consists of: date + list of 8bytes of (always?) 5minutes intervals
         // these intervals contain seconds offset from the date, type of activity, calories,
@@ -1282,7 +1469,7 @@ public class FitProDeviceSupport extends AbstractBTLESingleDeviceSupport {
             byte[] packet = new byte[8];
             System.arraycopy(value, i, packet, 0, 8);
             long data = ByteBuffer.wrap(packet).getLong();
-            int steps = (int) Math.abs((data >> 52));
+            int steps = (int) ((data >>> 52) & 0xfff);
             int calories = (int) (data & 0x7ffff);
             int activity_kind = (int) ((data >> 19) & 0x1);
             int duration = (int) ((data >> 48) & 0xf);
@@ -1449,7 +1636,7 @@ public class FitProDeviceSupport extends AbstractBTLESingleDeviceSupport {
 
     public Calendar decodeDateTime(byte[] dateArray) {
         debugPrintArray(dateArray, "array to decode to date time");
-        short dateShort = ByteBuffer.wrap(dateArray).getShort();
+        int dateShort = Short.toUnsignedInt(ByteBuffer.wrap(dateArray).getShort());
 
         int day = (dateShort & 0x1f);
         int month = ((dateShort >> 5) & 0xf);

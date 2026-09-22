@@ -1,0 +1,15 @@
+#FitPro watch-face capabilities
+#Mon Sep 21 17:09:41 GMT+05:30 2026
+matchModel=K75
+version=1
+slots=0
+grade=0
+thumbnailPercent=0
+width=240
+mainModel=LJ736
+screenType=0
+thumbnailRadius=0
+config=0
+height=286
+algorithm=3
+customer=

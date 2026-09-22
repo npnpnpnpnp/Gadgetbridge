@@ -3,10 +3,8 @@
     xmlns:tools="http://schemas.android.com/tools">
 
 
-    <!--
-        Comment in for testing Pebble Emulator
-        <uses-permission android:name="android.permission.INTERNET" />
-    -->
+    <!-- Required for the optional FitPro watch-face catalogue and its assets. -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <!-- Used for Bluetooth access -->
     <!--
         Request legacy Bluetooth permissions on older devices.
@@ -55,9 +53,6 @@
     <!-- Read passes from FossWallet -->
     <uses-permission android:name="nz.eloque.foss_wallet.READ_CARDS"/>
     <uses-permission android:name="nz.eloque.foss_wallet.dev.READ_CARDS"/>
-
-    <!-- Make sure we don't get the INTERNET permission even when a dependency requires it -->
-    <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
 
     <!-- Internet Helper -->
     <uses-permission android:name="nodomain.freeyourgadget.internethelper.INTERNET"/>
@@ -173,6 +168,14 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:requestLegacyExternalStorage="true"
         android:theme="@style/GadgetbridgeTheme">
+        <activity android:name=".activities.FitProCreateWatchfaceActivity"
+            android:exported="false" android:label="@string/fitpro_create_watchface" />
+        <activity android:name=".activities.FitProCatalogueActivity"
+            android:exported="false" android:label="@string/fitpro_catalogue" />
+        <activity android:name=".activities.FitProCatalogueDetailActivity"
+            android:exported="false" android:label="@string/fitpro_catalogue_face" />
+        <activity android:name=".activities.FitProWatchfaceActivity"
+            android:exported="false" android:label="@string/fitpro_watchfaces" />
         <activity
             android:name=".activities.ControlCenterv2"
             android:label="@string/title_activity_controlcenter"

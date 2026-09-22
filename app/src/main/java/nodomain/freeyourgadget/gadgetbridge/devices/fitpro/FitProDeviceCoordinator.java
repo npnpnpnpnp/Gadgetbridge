@@ -19,6 +19,12 @@
 package nodomain.freeyourgadget.gadgetbridge.devices.fitpro;
 
 import android.app.Activity;
+import android.content.Context;
+import android.net.Uri;
+import android.os.Bundle;
+import java.util.ArrayList;
+import nodomain.freeyourgadget.gadgetbridge.activities.FitProWatchfaceActivity;
+import nodomain.freeyourgadget.gadgetbridge.devices.InstallHandler;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -61,7 +67,10 @@ public class FitProDeviceCoordinator extends AbstractBLEDeviceCoordinator {
 
     @Override
     protected Pattern getSupportedDeviceName() {
-        return Pattern.compile("^(M6.*|M4.*|LH716|Sunset 6|Watch7|Fit1900|716|YBW-05|SERIES 11)$");
+        // White-label FitPro watches commonly advertise a marketing name rather
+        // than their protocol family. Keep this broad enough for Ultra/T-series
+        // variants, but do not claim arbitrary unnamed BLE peripherals.
+        return Pattern.compile("(?i)^(M6.*|M4.*|LH716|Sunset 6|Watch7|Fit1900|716|YBW-05|SERIES 11|Ultra\\s*.*|T(?:800|900|1000).*|HiWatch.*|FitPro.*)$");
     }
 
     @Override
@@ -69,6 +78,12 @@ public class FitProDeviceCoordinator extends AbstractBLEDeviceCoordinator {
         // different devices seem to work differently.
         // user will unfortunately need to decide
         return BONDING_STYLE_ASK;
+    }
+
+    @Override
+    public InstallHandler findInstallHandler(Uri uri, Bundle options, Context context) {
+        FitProWatchfaceInstallHandler handler = new FitProWatchfaceInstallHandler(uri, context);
+        return handler.isValid() ? handler : null;
     }
 
     @Nullable
@@ -182,10 +197,10 @@ public class FitProDeviceCoordinator extends AbstractBLEDeviceCoordinator {
 
     @Override
     public List<DeviceCardAction> getCustomActions() {
-        if (!CameraActivity.supportsCamera()) {
-            return Collections.emptyList();
-        }
-
-        return Collections.singletonList(new DeviceCardAction.CameraAction());
+        List<DeviceCardAction> actions = new ArrayList<>();
+        if (CameraActivity.supportsCamera()) actions.add(new DeviceCardAction.CameraAction());
+        actions.add(DeviceCardAction.forActivity(R.drawable.ic_watchface,
+                R.string.fitpro_watchfaces, FitProWatchfaceActivity.class));
+        return actions;
     }
 }

@@ -1,0 +1,31 @@
+{
+  "id": "3514",
+  "binFile": {
+    "name": "7.bin",
+    "url": "https://cdn.jusonsmart.com/band/1659938825721.bin",
+    "size": "140867"
+  },
+  "lybinFile": {
+    "name": "1659938825721.bin",
+    "url": "http://static.jusonsmart.com/watch/lywatch/20251124113816_10062.bin",
+    "size": "53329"
+  },
+  "materialList": [
+    {
+      "name": "PREVIEW.png",
+      "url": "https://cdn.jusonsmart.com/band/1659938828432/PREVIEW.png",
+      "size": "44111"
+    },
+    {
+      "name": "PREVIEW.gif",
+      "url": "https://cdn.jusonsmart.com/band/1659938828432/PREVIEW.gif",
+      "size": "38829"
+    }
+  ],
+  "original": true,
+  "screenSize": "240X286",
+  "version": "1",
+  "group": "\u8282\u65e5\u8868\u76d8,Holiday dial",
+  "editable": false,
+  "sizeAlign": false
+}

@@ -205,10 +205,11 @@ android {
     }
 
     buildTypes {
-        //debug {
-        //    minifyEnabled true
-        //    proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
-        //}
+        debug {
+            applicationIdSuffix ".ls7076"
+            versionNameSuffix "-ls7076-test"
+            signingConfig = signingConfigs.debug
+        }
 
         release {
             minifyEnabled true

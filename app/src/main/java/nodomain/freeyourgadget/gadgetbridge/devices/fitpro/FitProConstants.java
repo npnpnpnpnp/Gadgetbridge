@@ -48,6 +48,7 @@ public class FitProConstants {
     };
 
     public static final UUID UUID_CHARACTERISTIC_UART = UUID.fromString("6e400001-b5a3-f393-e0a9-e50e24dcca9d");
+    public static final UUID UUID_SERVICE_HIWATCH = UUID.fromString("6e400801-b5a3-f393-e0a9-e50e24dcca9d");
     public static final UUID UUID_CHARACTERISTIC_TX = UUID.fromString("6e400002-b5a3-f393-e0a9-e50e24dcca9d");
     public static final UUID UUID_CHARACTERISTIC_RX = UUID.fromString("6e400003-b5a3-f393-e0a9-e50e24dcca9d");
     //public static final UUID LT716_OTA = UUID.fromString("00010203-0405-0607-0809-0a0b0c0d1912"); //when in OTA mode

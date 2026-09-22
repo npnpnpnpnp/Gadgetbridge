@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="fitpro_watchfaces">Watch faces</string>
+    <string name="fitpro_uploading_watchface">Uploading watch face</string>
+    <string name="fitpro_watchface_complete">Watch face installed</string>
+    <string name="fitpro_choose_watchface">Choose watch-face package</string>
+    <string name="fitpro_read_watchface_details">Read display details</string>
+    <string name="fitpro_export_watchface_details">Export display details</string>
+    <string name="fitpro_export_display_spec">Export display specification</string>
+    <string name="fitpro_display_spec_requested">Reading display specification. Tap Export display specification again when it finishes.</string>
+    <string name="fitpro_read_details_first">Connect the watch, read its display details, then try exporting again.</string>
+    <string name="fitpro_watchface_help">Install a watch-face package prepared for this watch. The chosen face replaces a downloadable face slot. Prepared static and animated faces can be transferred. For the LJ736/K75 display, create a package offline from a photo or GIF.\n\nExport display details to help prepare a compatible package.</string>
+    <string name="fitpro_create_watchface">Create watch face</string>
+    <string name="fitpro_create_help">Choose a photo or GIF and save a ZIP to install later. Everything is converted on this phone. Images are cropped to fill the screen.\n\nThe live clock uses a black strip at the bottom. GIFs are limited to 30 seconds and sampled at up to 10 frames per second. Face playback and animation timing are experimental until tested on your watch.</string>
+    <string name="fitpro_show_clock">Show live clock</string>
+    <string name="fitpro_palette_label">Image palette</string>
+    <string name="fitpro_palette_216">216 RGB565 colours — compatibility mode</string>
+    <string name="fitpro_palette_255">255 RGB565 colours — more photo detail</string>
+    <string name="fitpro_palette_direct">Direct RGB565 — no image palette</string>
+    <string name="fitpro_choose_image">Choose image or GIF</string>
+    <string name="fitpro_save_zip">Save watch-face ZIP</string>
+    <string name="fitpro_converting">Converting on this phone…</string>
+    <string name="fitpro_saving">Saving ZIP…</string>
+    <string name="fitpro_zip_ready">Watch face is ready. Save the ZIP to install it later.</string>
+    <string name="fitpro_zip_saved">ZIP saved. Return to Watch faces and choose the package when you want to install it.</string>
+    <string name="fitpro_conversion_failed">Conversion or export failed: %1$s</string>
+    <string name="fitpro_choose_again">Choose an image or GIF to create a face with this clock setting.</string>
+    <string name="fitpro_catalogue">Browse watch-face catalogue</string>
+    <string name="fitpro_catalogue_face">Catalogue watch face</string>
+    <string name="fitpro_catalogue_loading">Loading catalogue…</string>
+    <string name="fitpro_catalogue_downloading">Downloading and preparing watch-face ZIP…</string>
+    <string name="fitpro_catalogue_failed">Catalogue failed: %1$s</string>
+    <string name="fitpro_catalogue_count">%1$d compatible watch faces</string>
+    <string name="fitpro_page_of">Page %1$d of %2$d</string>
+    <string name="fitpro_previous">Previous</string>
+    <string name="fitpro_next">Next</string>
+    <string name="fitpro_go">Go</string>
+    <string name="fitpro_install_catalogue">Install this watch face</string>
+    <string name="fitpro_save_catalogue">Save ZIP for later</string>
+</resources>
