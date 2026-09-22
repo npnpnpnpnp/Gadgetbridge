@@ -1,0 +1,15 @@
+
+brew install jadx apktool
+
+apktool d hiwatchPro1-3-76\(53\)_20260909_EN.apk -o apktool_out
+
+jadx -d jadx_out_deobf --deobf hiwatchPro1-3-76\(53\)_20260909_EN.apk
+
+jadx -d jadx_out --log-level DEBUG hiwatchPro1-3-76\(53\)_20260909_EN.apk 2>&1 | tee jadx.log
+
+
+
+DEBUG - Loading system dirs ...
+...
+WARN  - 1991 warnings in 518 nodes
+ERROR - finished with errors, count: 265
